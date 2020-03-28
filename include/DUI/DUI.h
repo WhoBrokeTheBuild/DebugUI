@@ -495,6 +495,9 @@ void DUI_Print(const char * format, ...)
 
         dst.x += DUI_CHAR_SIZE;
     }
+
+    _duiCursor.x = dst.x;
+    _duiCursor.y = dst.y;
 }
 
 void DUI_Panel(int width, int height)
