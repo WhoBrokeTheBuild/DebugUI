@@ -3,6 +3,8 @@
 * Requires SDL2
 * Example code in demo/main.c
 
+![Demo GIF](images/demo.gif)
+
 # Building & Installing
 
 ```
@@ -37,4 +39,10 @@ TARGET_LINK_LIBRARIES(
     PRIVATE
         DUI::DUI
 )
+```
+
+# Demo
+
+```
+cc -o duidemo -I include -I/usr/include/SDL2 demo/main.c -lSDL2 && ./duidemo
 ```
