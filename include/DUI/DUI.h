@@ -478,6 +478,7 @@ void DUI_Print(const char * format, ...)
             DUI_Newline();
             dst.x = _duiCursor.x;
             dst.y = _duiCursor.y;
+            continue;
         }
 
         char * index = strchr(DUI_FONT_MAP, toupper(buffer[i]));
