@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+includedir=include
+
+Name: DUI
+Description: Immediate Mode Debug UI
+Version: @VERSION@
+
+Requires:
+DUI: -I${includedir}

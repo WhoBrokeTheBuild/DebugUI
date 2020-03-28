@@ -1,0 +1,67 @@
+CMAKE_MINIMUM_REQUIRED(VERSION 3.2 FATAL_ERROR)
+
+PROJECT(DUI LANGUAGES C VERSION 1.0.0)
+
+ADD_LIBRARY(DUI INTERFACE)
+
+TARGET_INCLUDE_DIRECTORIES(
+    DUI
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+INSTALL(TARGETS DUI
+    EXPORT DUITargets
+    INCLUDES DESTINATION include
+)
+
+INCLUDE(CMakePackageConfigHelpers)
+
+WRITE_BASIC_PACKAGE_VERSION_FILE(
+    "${CMAKE_BINARY_DIR}/DUIConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY AnyNewerVersion
+)
+
+INSTALL(EXPORT DUITargets
+    FILE DUITargets.cmake
+    NAMESPACE DUI::
+    DESTINATION lib/cmake/DUI
+)
+
+CONFIGURE_PACKAGE_CONFIG_FILE(
+    "${CMAKE_SOURCE_DIR}/cmake/DUIConfig.cmake.in"
+    "${CMAKE_BINARY_DIR}/DUIConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/DUI
+)
+
+INSTALL(EXPORT DUITargets 
+    DESTINATION lib/cmake/DUI
+)
+
+INSTALL(FILES 
+    "${CMAKE_BINARY_DIR}/DUIConfigVersion.cmake" 
+    "${CMAKE_BINARY_DIR}/DUIConfig.cmake"
+    DESTINATION lib/cmake/DUI
+)
+
+INCLUDE(FindPkgConfig)
+
+IF(PKG_CONFIG_FOUND)
+    CONFIGURE_FILE(
+        "${CMAKE_SOURCE_DIR}/cmake/DUI.pc.in"
+        "${CMAKE_BINARY_DIR}/DUI.pc"
+        @ONLY
+    )
+
+    INSTALL(FILES
+        "${CMAKE_BINARY_DIR}/DUI.pc"
+        DESTINATION share/pkgconfig
+    )
+ENDIF()
+
+INSTALL(DIRECTORY
+    "${CMAKE_SOURCE_DIR}/include/"
+    DESTINATION include
+)
