@@ -31,8 +31,10 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 typedef struct
 {
-    int CharSize;               // = 8
-    int LineHeight;             // = 12
+    int CharWidth;
+    int CharHeight;
+
+    int LinePadding;            // = 4
 
     int PanelPadding;           // = 8
 
@@ -42,7 +44,7 @@ typedef struct
     int TabPadding;             // = 8
     int TabMargin;              // = 8
 
-    uint8_t ColorBackground[4]; // = 0xEE
+    uint8_t ColorBackground[4];
     uint8_t ColorBorder[4];
     uint8_t ColorHover[4];
     uint8_t ColorDefault[4];
@@ -65,6 +67,10 @@ void DUI_Term();
  */
 void DUI_Update();
 
+/* Render DUI Foreground and Overlay, call at the end of every frame.
+ */
+void DUI_Render();
+
 /* Set the style.
  *
  * @param style: The DUI_Style to use
@@ -77,13 +83,25 @@ void DUI_SetStyle(DUI_Style style);
  */
 DUI_Style * DUI_GetStyle();
 
-/* Handle a SDL Event.
- *
- * @param evt: The SDL_Event to process. The WindowID will be 
- *   checked against the window given to DUI_Init to limit what
- *   events are processed.
+/* Set the Render Draw Color of the SDL Renderer to the
+ *  color specified in Style.ColorBackground.
  */
-void DUI_HandleEvent(SDL_Event * evt);
+void DUI_SetColorBackground();
+
+/* Set the Render Draw Color of the SDL Renderer to the
+ *  color specified in Style.ColorBorder.
+ */
+void DUI_SetColorBorder();
+
+/* Set the Render Draw Color of the SDL Renderer to the
+ *  color specified in Style.ColorHover.
+ */
+void DUI_SetColorHover();
+
+/* Set the Render Draw Color of the SDL Renderer to the
+ *  color specified in Style.ColorDefault.
+ */
+void DUI_SetColorDefault();
 
 /* Move the DUI cursor.
  *
@@ -115,7 +133,7 @@ void DUI_GetCursor(int * x, int * y);
 /* Move the cursor to a new line.
  *
  * Reset the x coordinate to the beginning of the line, and
- *   increment the y by the LineHeight, set in the style.
+ *   increment the y by the CharHeight and LinePadding, set in the style.
  */
 void DUI_Newline();
 
@@ -154,18 +172,31 @@ void DUI_Print(const char * format, ...);
         DUI_MoveCursor(tmpX, tmpY);         \
     } while (0)
 
-/* Draw a bordered box, and move the cursor inside it.
+/* Store the current panel title, and minimum size
+ *
+ * Always call DUI_PanelEnd() after calling this.
+ * 
+ * @param title: Optional title to display in the panel.
+ *
+ * @param width: The minimum width of the panel to draw.
+ *
+ * @param height: The minimum height of the panel to draw.
+ * 
+ * @param fixed: True if the panel should not grow to fit its contents.
+ */
+void DUI_PanelStart(const char * title, int width, int height, bool fixed);
+
+/* Draw the current panel outline and title, then discard the
+ *   current panel information.
+ * 
+ * Call this only after DUI_PanelStart().
  *
  * The border will be drawn with ColorBorder.
  * The background will be filled with ColorBackground.
  * The PanelPadding value will be added to the cursor's
  *   x and y coordinates.
- *
- * @param width: The width of the panel to draw.
- *
- * @param height: The height of the panel to draw.
  */
-void DUI_Panel(int width, int height);
+void DUI_PanelEnd();
 
 /* Draw a button with the specified text.
  *
@@ -308,7 +339,11 @@ bool DUI_Tab(const char * text, int index, int * currentIndex);
 
 #if defined(DUI_IMPLEMENTATION)
 
-#include <DUI/DUI_font.h>
+#if defined(DUI_FONT_ANONYMOUS)
+#   include <DUI/DUI_FontAnonymous.h>
+#else
+#   include <DUI/DUI_FontGB.h>
+#endif
 
 SDL_Window *   _duiWindow      = NULL;
 SDL_Renderer * _duiRenderer    = NULL;
@@ -316,9 +351,29 @@ SDL_Texture *  _duiFontTexture = NULL;
 
 int _duiWindowID = 0;
 
+typedef struct
+{
+    bool Fixed;
+    SDL_Rect Bounds;
+    const char * Title;
+    SDL_Texture * Texture;
+
+} DUI_PanelInfo;
+
+#ifndef DUI_PANEL_STACK_DEPTH
+#   define DUI_PANEL_STACK_DEPTH (10)
+#endif // DUI_PANEL_STACK_DEPTH
+
+DUI_PanelInfo _duiPanelStack[DUI_PANEL_STACK_DEPTH + 1];
+int _duiPanelStackIndex = 0;
+
+SDL_Texture * _duiOverlayTexture = NULL;
+
 DUI_Style _duiStyle = {
-    .CharSize = 8,
-    .LineHeight = 12,
+    .CharWidth = DUI_FONT_CHAR_WIDTH,
+    .CharHeight = DUI_FONT_CHAR_HEIGHT,
+
+    .LinePadding = 4,
 
     .PanelPadding = 8,
 
@@ -340,43 +395,47 @@ SDL_Point _duiMouse     = { 0, 0 };
 SDL_Point _duiCursor    = { 0, 0 };
 SDL_Point _duiTabCursor = { 0, 0 };
 
+int _duiWindowWidth;
+int _duiWindowHeight;
+
 bool _duiMouseDown = false;
 bool _duiClicked = false;
 
-void DUI_setColorBackground()
+DUI_PanelInfo * DUI_getCurrentPanel()
 {
-    SDL_SetRenderDrawColor(_duiRenderer, 
-        _duiStyle.ColorBackground[0],
-        _duiStyle.ColorBackground[1],
-        _duiStyle.ColorBackground[2],
-        _duiStyle.ColorBackground[3]);
+    return &_duiPanelStack[_duiPanelStackIndex];
 }
 
-void DUI_setColorBorder()
+void DUI_popPanel()
 {
-    SDL_SetRenderDrawColor(_duiRenderer, 
-        _duiStyle.ColorBorder[0],
-        _duiStyle.ColorBorder[1],
-        _duiStyle.ColorBorder[2],
-        _duiStyle.ColorBorder[3]);
+    --_duiPanelStackIndex;
 }
 
-void DUI_setColorHover()
+DUI_PanelInfo * DUI_pushPanel()
 {
-    SDL_SetRenderDrawColor(_duiRenderer, 
-        _duiStyle.ColorHover[0],
-        _duiStyle.ColorHover[1],
-        _duiStyle.ColorHover[2],
-        _duiStyle.ColorHover[3]);
+    ++_duiPanelStackIndex;
+    DUI_PanelInfo * panel = DUI_getCurrentPanel();
+    panel->Bounds = (SDL_Rect){ 0, 0, 0, 0 };
+    return panel;
 }
 
-void DUI_setColorDefault()
+void DUI_growPanel()
 {
-    SDL_SetRenderDrawColor(_duiRenderer, 
-        _duiStyle.ColorDefault[0],
-        _duiStyle.ColorDefault[1],
-        _duiStyle.ColorDefault[2],
-        _duiStyle.ColorDefault[3]);
+    DUI_PanelInfo * panel = DUI_getCurrentPanel();
+    if (panel->Fixed) {
+        return;
+    }
+
+    int x = (_duiCursor.x - panel->Bounds.x);
+    int y = (_duiCursor.y - panel->Bounds.y);
+
+    if (x > panel->Bounds.w) {
+        panel->Bounds.w = x;
+    }
+
+    if (y > panel->Bounds.h) {
+        panel->Bounds.h = y;
+    }
 }
 
 void DUI_Init(SDL_Window * window)
@@ -385,16 +444,52 @@ void DUI_Init(SDL_Window * window)
     _duiRenderer = SDL_GetRenderer(window);
     _duiWindowID = SDL_GetWindowID(window);
 
+    SDL_SetRenderDrawBlendMode(_duiRenderer, SDL_BLENDMODE_BLEND);
+
+    SDL_GetWindowSize(window, &_duiWindowWidth, &_duiWindowHeight);
+
+    int pitch;
+    void * pixels;
+
+    // The Window's Rendering Target
+    _duiPanelStack[0].Fixed = true;
+    _duiPanelStack[0].Bounds = (SDL_Rect){ 0, 0, _duiWindowWidth, _duiWindowHeight };
+    _duiPanelStack[0].Title = NULL;
+    _duiPanelStack[0].Texture = NULL;
+
+    for (int i = 1; i <= DUI_PANEL_STACK_DEPTH; ++i) {
+        _duiPanelStack[i].Texture = SDL_CreateTexture(_duiRenderer, 
+            SDL_PIXELFORMAT_RGBA32,
+            SDL_TEXTUREACCESS_TARGET,
+            _duiWindowWidth, _duiWindowHeight);
+
+        SDL_SetTextureBlendMode(_duiPanelStack[i].Texture, SDL_BLENDMODE_BLEND);
+    }
+
+    _duiOverlayTexture = SDL_CreateTexture(_duiRenderer, 
+            SDL_PIXELFORMAT_RGBA32,
+            SDL_TEXTUREACCESS_TARGET,
+            _duiWindowWidth, _duiWindowHeight);
+
+    SDL_SetTextureBlendMode(_duiOverlayTexture, SDL_BLENDMODE_BLEND);
+
     SDL_RWops * fontMem = SDL_RWFromConstMem(DUI_FONT_BMP, sizeof(DUI_FONT_BMP));
     SDL_Surface * fontSurface = SDL_LoadBMP_RW(fontMem, 1);
 
     _duiFontTexture = SDL_CreateTextureFromSurface(_duiRenderer, fontSurface);
     SDL_FreeSurface(fontSurface);
+
+    SDL_SetRenderTarget(_duiRenderer, _duiPanelStack[0].Texture);
 }
 
 void DUI_Term()
 {
     SDL_DestroyTexture(_duiFontTexture);
+        
+    for (int i = 1; i < DUI_PANEL_STACK_DEPTH; ++i) {
+        SDL_DestroyTexture(_duiPanelStack[i].Texture);
+        _duiPanelStack[i].Texture = NULL;
+    }
 }
 
 void DUI_Update()
@@ -405,6 +500,10 @@ void DUI_Update()
     _duiMouseDown = pressed;
 }
 
+void DUI_Render()
+{
+}
+
 void DUI_SetStyle(DUI_Style style)
 {
     _duiStyle = style;
@@ -413,6 +512,42 @@ void DUI_SetStyle(DUI_Style style)
 DUI_Style * DUI_GetStyle()
 {
     return &_duiStyle;
+}
+
+void DUI_SetColorBackground()
+{
+    SDL_SetRenderDrawColor(_duiRenderer, 
+        _duiStyle.ColorBackground[0],
+        _duiStyle.ColorBackground[1],
+        _duiStyle.ColorBackground[2],
+        _duiStyle.ColorBackground[3]);
+}
+
+void DUI_SetColorBorder()
+{
+    SDL_SetRenderDrawColor(_duiRenderer, 
+        _duiStyle.ColorBorder[0],
+        _duiStyle.ColorBorder[1],
+        _duiStyle.ColorBorder[2],
+        _duiStyle.ColorBorder[3]);
+}
+
+void DUI_SetColorHover()
+{
+    SDL_SetRenderDrawColor(_duiRenderer, 
+        _duiStyle.ColorHover[0],
+        _duiStyle.ColorHover[1],
+        _duiStyle.ColorHover[2],
+        _duiStyle.ColorHover[3]);
+}
+
+void DUI_SetColorDefault()
+{
+    SDL_SetRenderDrawColor(_duiRenderer, 
+        _duiStyle.ColorDefault[0],
+        _duiStyle.ColorDefault[1],
+        _duiStyle.ColorDefault[2],
+        _duiStyle.ColorDefault[3]);
 }
 
 void DUI_MoveCursor(int x, int y)
@@ -437,8 +572,10 @@ void DUI_GetCursor(int * x, int * y)
 
 void DUI_Newline()
 {
-    _duiCursor.y += _duiStyle.LineHeight;
+    _duiCursor.y += _duiStyle.CharHeight + _duiStyle.LinePadding;
     _duiCursor.x = _duiLineStart;
+
+    DUI_growPanel();
 }
 
 void DUI_Print(const char * format, ...)
@@ -455,22 +592,24 @@ void DUI_Print(const char * format, ...)
     SDL_Rect src = { 
         .x = 0,
         .y = 0,
-        .w = 8,
-        .h = 8,
+        .w = DUI_FONT_CHAR_WIDTH,
+        .h = DUI_FONT_CHAR_HEIGHT,
     };
 
     SDL_Rect dst = { 
         .x = _duiCursor.x,
         .y = _duiCursor.y,
-        .w = _duiStyle.CharSize,
-        .h = _duiStyle.CharSize,
+        .w = _duiStyle.CharWidth,
+        .h = _duiStyle.CharHeight,
     };
+
+    int charPerLine = (DUI_FONT_MAP_WIDTH / DUI_FONT_CHAR_WIDTH);
 
     char * questionMark = strchr(DUI_FONT_MAP, '?');
 
     for (size_t i = 0; i < length; ++i) {
         if (buffer[i] == ' ') {
-            dst.x += _duiStyle.CharSize;
+            dst.x += _duiStyle.CharWidth;
             continue;
         }
 
@@ -481,7 +620,12 @@ void DUI_Print(const char * format, ...)
             continue;
         }
 
-        char * index = strchr(DUI_FONT_MAP, toupper(buffer[i]));
+        char search = buffer[i];
+        if (DUI_FONT_UPPERCASE) {
+            search = toupper(buffer[i]);
+        }
+
+        char * index = strchr(DUI_FONT_MAP, search);
 
         if (index == NULL) {
             index = questionMark;
@@ -489,41 +633,85 @@ void DUI_Print(const char * format, ...)
 
         size_t offset = index - DUI_FONT_MAP;
 
-        src.x = (offset % 8) * 8;
-        src.y = (offset / 8) * 8;
+        src.x = (offset % charPerLine) * DUI_FONT_CHAR_WIDTH;
+        src.y = (offset / charPerLine) * DUI_FONT_CHAR_HEIGHT;
         SDL_RenderCopy(_duiRenderer, _duiFontTexture, &src, &dst);
 
-        dst.x += _duiStyle.CharSize;
+        dst.x += _duiStyle.CharWidth;
     }
 
     _duiCursor.x = dst.x;
     _duiCursor.y = dst.y;
+
+    DUI_growPanel();
 }
 
-void DUI_Panel(int width, int height)
+void DUI_PanelStart(const char * title, int width, int height, bool fixed)
 {
-    SDL_Rect bounds = {
-        .x = _duiCursor.x,
-        .y = _duiCursor.y,
-        .w = width,
-        .h = height,
-    };
+    DUI_PanelInfo * panel = DUI_pushPanel();
+    panel->Fixed = fixed;
+    panel->Title = title;
+    panel->Bounds.x = _duiCursor.x;
+    panel->Bounds.y = _duiCursor.y;
+    panel->Bounds.w = width + _duiStyle.PanelPadding;
+    panel->Bounds.h = height + _duiStyle.PanelPadding;
 
-    DUI_setColorBackground();
-    SDL_RenderFillRect(_duiRenderer, &bounds);
-
-    DUI_setColorBorder();
-    SDL_RenderDrawRect(_duiRenderer, &bounds);
+    if (panel->Title) {
+        panel->Bounds.y += (_duiStyle.CharHeight / 2);
+        DUI_MoveCursorRelative(0, _duiStyle.CharHeight);
+    }
 
     DUI_MoveCursorRelative(_duiStyle.PanelPadding, _duiStyle.PanelPadding);
+
+    SDL_SetRenderTarget(_duiRenderer, _duiPanelStack[_duiPanelStackIndex].Texture);
+    SDL_SetRenderDrawColor(_duiRenderer, 0x00, 0x00, 0x00, 0x00);
+    SDL_RenderClear(_duiRenderer);
+}
+
+void DUI_PanelEnd()
+{
+    DUI_PanelInfo * panel = DUI_getCurrentPanel();
+
+    panel->Bounds.w += _duiStyle.PanelPadding;
+    panel->Bounds.h += _duiStyle.PanelPadding;
+
+    SDL_Rect bounds = panel->Bounds;
+
+    if (panel->Title) {
+        SDL_Rect bounds = panel->Bounds;
+        bounds.x += _duiStyle.CharWidth;
+        bounds.y -= (_duiStyle.CharHeight / 2);
+        bounds.w = (_duiStyle.CharWidth * (strlen(panel->Title) + 2));
+        bounds.h = _duiStyle.CharHeight;
+        
+        DUI_SetColorBackground();
+        SDL_RenderFillRect(_duiRenderer, &bounds);
+
+        DUI_PrintAt(bounds.x + _duiStyle.CharWidth, bounds.y, panel->Title);
+    }
+
+    SDL_SetRenderTarget(_duiRenderer, _duiPanelStack[_duiPanelStackIndex - 1].Texture);
+
+    DUI_SetColorBackground();
+    SDL_RenderFillRect(_duiRenderer, &bounds);
+
+    DUI_SetColorBorder();
+    SDL_RenderDrawRect(_duiRenderer, &bounds);
+
+    SDL_RenderCopy(_duiRenderer, _duiPanelStack[_duiPanelStackIndex].Texture, NULL, NULL);
+
+    DUI_MoveCursor(panel->Bounds.x, 
+        panel->Bounds.y + panel->Bounds.h + _duiStyle.LinePadding);
+
+    DUI_popPanel();
 }
 
 bool DUI_Button(const char * text)
 {
-    int width = (strlen(text) * _duiStyle.CharSize) 
+    int width = (strlen(text) * _duiStyle.CharWidth) 
         + (_duiStyle.ButtonPadding * 2);
 
-    int height = _duiStyle.CharSize 
+    int height = _duiStyle.CharHeight
         + (_duiStyle.ButtonPadding * 2);
 
     SDL_Rect bounds = {
@@ -537,15 +725,15 @@ bool DUI_Button(const char * text)
     bool clicked = (hover && _duiClicked);
 
     if (hover) {
-        DUI_setColorHover();
+        DUI_SetColorHover();
     }
     else {
-        DUI_setColorDefault();
+        DUI_SetColorDefault();
     }
 
     SDL_RenderFillRect(_duiRenderer, &bounds);
 
-    DUI_setColorBorder();
+    DUI_SetColorBorder();
     SDL_RenderDrawRect(_duiRenderer, &bounds);
 
     _duiCursor.x += _duiStyle.ButtonPadding;
@@ -562,22 +750,23 @@ bool DUI_Button(const char * text)
 bool DUI_ButtonAt(int x, int y, const char * text)
 {
     SDL_Point tmp = _duiCursor;
-    DUI_MoveCursor(x, y);
+    _duiCursor.x = x;
+    _duiCursor.y = y;
 
     bool clicked = DUI_Button(text);
 
-    DUI_MoveCursor(tmp.x, tmp.y);
+    _duiCursor = tmp;
 
     return clicked;
 }
 
 bool DUI_Checkbox(const char * text, bool * checked)
 {
-    int width = (strlen(text) * _duiStyle.CharSize) 
-        + (_duiStyle.CharSize * 2)
+    int width = (strlen(text) * _duiStyle.CharWidth)
+        + (_duiStyle.CharWidth * 2)
         + (_duiStyle.ButtonPadding * 2);
 
-    int height = _duiStyle.CharSize 
+    int height = _duiStyle.CharHeight
         + (_duiStyle.ButtonPadding * 2);
 
     SDL_Rect bounds = {
@@ -591,22 +780,22 @@ bool DUI_Checkbox(const char * text, bool * checked)
     bool clicked = (hover && _duiClicked);
 
     if (hover) {
-        DUI_setColorHover();
+        DUI_SetColorHover();
     }
     else {
-        DUI_setColorDefault();
+        DUI_SetColorDefault();
     }
 
     SDL_RenderFillRect(_duiRenderer, &bounds);
 
-    DUI_setColorBorder();
+    DUI_SetColorBorder();
     SDL_RenderDrawRect(_duiRenderer, &bounds);
 
     SDL_Rect mark = { 
-        .x = bounds.x + _duiStyle.CharSize,
-        .y = bounds.y + (_duiStyle.CharSize / 2),
-        .w = _duiStyle.CharSize,
-        .h = _duiStyle.CharSize,
+        .x = bounds.x + (_duiStyle.CharWidth / 2),
+        .y = bounds.y + (_duiStyle.CharHeight / 2),
+        .w = _duiStyle.CharWidth,
+        .h = _duiStyle.CharWidth,
     };
 
     SDL_RenderDrawRect(_duiRenderer, &mark);
@@ -624,7 +813,9 @@ bool DUI_Checkbox(const char * text, bool * checked)
         SDL_RenderFillRect(_duiRenderer, &mark);
     }
 
-    _duiCursor.x += _duiStyle.ButtonPadding + (_duiStyle.CharSize * 2);
+    _duiCursor.x += _duiStyle.ButtonPadding
+        + _duiStyle.CharWidth
+        + (_duiStyle.CharWidth / 2);
     _duiCursor.y += _duiStyle.ButtonPadding;
 
     DUI_Print("%s", text);
@@ -638,22 +829,23 @@ bool DUI_Checkbox(const char * text, bool * checked)
 bool DUI_CheckboxAt(int x, int y, const char * text, bool * checked)
 {
     SDL_Point tmp = _duiCursor;
-    DUI_MoveCursor(x, y);
+    _duiCursor.x = x;
+    _duiCursor.y = y;
 
     bool selected = DUI_Checkbox(text, checked);
 
-    DUI_MoveCursor(tmp.x, tmp.y);
+    _duiCursor = tmp;
 
     return selected;
 }
 
 bool DUI_Radio(const char * text, int index, int * currentIndex)
 {
-    int width = (strlen(text) * _duiStyle.CharSize) 
-        + (_duiStyle.CharSize * 2)
+    int width = (strlen(text) * _duiStyle.CharWidth) 
+        + (_duiStyle.CharWidth * 2)
         + (_duiStyle.ButtonPadding * 2);
 
-    int height = _duiStyle.CharSize 
+    int height = _duiStyle.CharHeight 
         + (_duiStyle.ButtonPadding * 2);
 
     SDL_Rect bounds = {
@@ -673,22 +865,22 @@ bool DUI_Radio(const char * text, int index, int * currentIndex)
     bool active = (*currentIndex == index);
 
     if (hover) {
-        DUI_setColorHover();
+        DUI_SetColorHover();
     }
     else {
-        DUI_setColorDefault();
+        DUI_SetColorDefault();
     }
 
     SDL_RenderFillRect(_duiRenderer, &bounds);
 
-    DUI_setColorBorder();
+    DUI_SetColorBorder();
     SDL_RenderDrawRect(_duiRenderer, &bounds);
 
     SDL_Rect mark = { 
-        .x = bounds.x + _duiStyle.CharSize,
-        .y = bounds.y + (_duiStyle.CharSize / 2),
-        .w = _duiStyle.CharSize, 
-        .h = _duiStyle.CharSize
+        .x = bounds.x + (_duiStyle.CharWidth / 2),
+        .y = bounds.y + (_duiStyle.CharHeight / 2),
+        .w = _duiStyle.CharWidth, 
+        .h = _duiStyle.CharWidth
     };
 
     SDL_RenderDrawRect(_duiRenderer, &mark);
@@ -702,7 +894,9 @@ bool DUI_Radio(const char * text, int index, int * currentIndex)
         SDL_RenderFillRect(_duiRenderer, &mark);
     }
 
-    _duiCursor.x += _duiStyle.ButtonPadding + (_duiStyle.CharSize * 2);
+    _duiCursor.x += _duiStyle.ButtonPadding
+        + _duiStyle.CharWidth
+        + (_duiStyle.CharWidth / 2);
     _duiCursor.y += _duiStyle.ButtonPadding;
     
     DUI_Print("%s", text);
@@ -716,11 +910,12 @@ bool DUI_Radio(const char * text, int index, int * currentIndex)
 bool DUI_RadioAt(int x, int y, const char * text, int index, int * currentIndex)
 {
     SDL_Point tmp = _duiCursor;
-    DUI_MoveCursor(x, y);
+    _duiCursor.x = x;
+    _duiCursor.y = y;
 
     bool selected = DUI_Radio(text, index, currentIndex);
 
-    DUI_MoveCursor(tmp.x, tmp.y);
+    _duiCursor = tmp;
 
     return selected;
 }
@@ -734,10 +929,10 @@ bool DUI_Tab(const char * text, int index, int * currentIndex)
 {
     _duiCursor = _duiTabCursor;
 
-    int width = (strlen(text) * _duiStyle.CharSize) 
+    int width = (strlen(text) * _duiStyle.CharWidth) 
         + (_duiStyle.TabPadding * 2);
 
-    int height = _duiStyle.CharSize 
+    int height = _duiStyle.CharHeight
         + (_duiStyle.TabPadding * 2);
 
     SDL_Rect bounds = {
@@ -757,15 +952,15 @@ bool DUI_Tab(const char * text, int index, int * currentIndex)
     bool active = (*currentIndex == index);
 
     if (hover || active) {
-        DUI_setColorHover();
+        DUI_SetColorHover();
     }
     else {
-        DUI_setColorDefault();
+        DUI_SetColorDefault();
     }
 
     SDL_RenderFillRect(_duiRenderer, &bounds);
 
-    DUI_setColorBorder();
+    DUI_SetColorBorder();
     SDL_RenderDrawRect(_duiRenderer, &bounds);
 
     _duiCursor.x += _duiStyle.TabPadding;

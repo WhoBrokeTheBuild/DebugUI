@@ -22,8 +22,8 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#ifndef DUI_FONT_H
-#define DUI_FONT_H
+#ifndef DUI_FONT_GB_H
+#define DUI_FONT_GB_H
 
 const char * DUI_FONT_MAP = 
 "ABCDEFGH"
@@ -34,6 +34,12 @@ const char * DUI_FONT_MAP =
 "89:;!?\"'"
 "(){}[]<>"
 "#$^~_&,.";
+
+const bool DUI_FONT_UPPERCASE = true;
+const int DUI_FONT_MAP_WIDTH   = 64;
+const int DUI_FONT_MAP_HEIGHT  = 64;
+const int DUI_FONT_CHAR_WIDTH  = 8;
+const int DUI_FONT_CHAR_HEIGHT = 8;
 
 unsigned char DUI_FONT_BMP[] = {
   0x42, 0x4d, 0x46, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x00,
@@ -1410,4 +1416,4 @@ unsigned char DUI_FONT_BMP[] = {
   0x00, 0x00
 };
 
-#endif // DUI_FONT_H
+#endif // DUI_FONT_GB_H
